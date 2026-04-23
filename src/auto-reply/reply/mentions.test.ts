@@ -17,4 +17,13 @@ describe("stripStructuralPrefixes", () => {
   it("passes through plain text", () => {
     expect(stripStructuralPrefixes("just a message")).toBe("just a message");
   });
+
+  it("preserves marketing callback payloads", () => {
+    expect(stripStructuralPrefixes("mkt:status:2:2")).toBe("mkt:status:2:2");
+    expect(
+      stripStructuralPrefixes(
+        'Conversation info (untrusted metadata):\n```json\n{"topic_id":"22"}\n```\n\nmkt:approve:instagram:2:2',
+      ),
+    ).toContain("mkt:approve:instagram:2:2");
+  });
 });

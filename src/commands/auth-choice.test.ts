@@ -453,7 +453,7 @@ function createDefaultProviderPlugins() {
       flagName: "--openrouter-api-key",
       envVar: "OPENROUTER_API_KEY",
       promptMessage: "Enter OpenRouter API key",
-      defaultModel: "openrouter/auto",
+      defaultModel: "openrouter/stepfun/step-3.5-flash:nitro",
     }),
     createApiKeyProvider({
       providerId: "qianfan",
@@ -1248,7 +1248,7 @@ describe("applyAuthChoice", () => {
         expectEnvPrompt: true,
         expectedTextCalls: 0,
         expectedKey: "sk-openrouter-test",
-        expectedModel: "openrouter/auto",
+        expectedModel: "openrouter/stepfun/step-3.5-flash:nitro",
       },
       {
         authChoice: "ai-gateway-api-key",

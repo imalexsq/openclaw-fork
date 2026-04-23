@@ -12,6 +12,7 @@ import {
   applyOpenrouterProviderConfig,
   OPENROUTER_DEFAULT_MODEL_REF,
 } from "./onboard.js";
+import { buildOpenrouterProvider } from "./provider-catalog.js";
 
 describe("openrouter onboard", () => {
   it("adds allowlist entry and preserves alias", () => {
@@ -19,6 +20,13 @@ describe("openrouter onboard", () => {
     expect(Object.keys(withDefault.agents?.defaults?.models ?? {})).toContain(
       OPENROUTER_DEFAULT_MODEL_REF,
     );
+    expect(withDefault.agents?.defaults?.models?.[OPENROUTER_DEFAULT_MODEL_REF]?.alias).toBe(
+      "StepFun Nitro",
+    );
+
+    expect(
+      buildOpenrouterProvider().models.some((model) => model.id === OPENROUTER_DEFAULT_MODEL_REF),
+    ).toBe(true);
 
     const withAlias = applyOpenrouterProviderConfig({
       agents: {

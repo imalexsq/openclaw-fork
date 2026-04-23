@@ -140,6 +140,37 @@ export function normalizeToolParams(params: unknown): Record<string, unknown> | 
   const record = params as Record<string, unknown>;
   const normalized = { ...record };
   normalizeClaudeParamAliases(normalized);
+  const edits = normalized.edits;
+  if (
+    typeof normalized.oldText !== "string" &&
+    typeof normalized.newText !== "string" &&
+    Array.isArray(edits) &&
+    edits.length === 1
+  ) {
+    const [firstEdit] = edits;
+    if (firstEdit && typeof firstEdit === "object") {
+      const editRecord = firstEdit as Record<string, unknown>;
+      if (typeof normalized.path !== "string") {
+        const pathValue =
+          editRecord.path ?? editRecord.file_path ?? editRecord.filePath ?? editRecord.file;
+        if (typeof pathValue === "string") {
+          normalized.path = pathValue;
+        }
+      }
+      const oldText = extractStructuredText(
+        editRecord.oldText ?? editRecord.old_string ?? editRecord.old_text ?? editRecord.oldString,
+      );
+      const newText = extractStructuredText(
+        editRecord.newText ?? editRecord.new_string ?? editRecord.new_text ?? editRecord.newString,
+      );
+      if (typeof oldText === "string") {
+        normalized.oldText = oldText;
+      }
+      if (typeof newText === "string") {
+        normalized.newText = newText;
+      }
+    }
+  }
   // Some providers/models emit text payloads as structured blocks instead of raw strings.
   // Normalize these for write/edit so content matching and writes stay deterministic.
   normalizeTextLikeParam(normalized, "content");

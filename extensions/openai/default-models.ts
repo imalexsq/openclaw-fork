@@ -12,6 +12,11 @@ export const OPENAI_DEFAULT_TTS_VOICE = "alloy";
 export const OPENAI_DEFAULT_AUDIO_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe";
 export const OPENAI_DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 
+const OPENAI_AUDIO_TRANSCRIPTION_MODEL = {
+  provider: "openai",
+  model: OPENAI_DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
+} as const;
+
 export function applyOpenAIProviderConfig(cfg: OpenClawConfig): OpenClawConfig {
   const next = ensureModelAllowlistEntry({
     cfg,
@@ -35,6 +40,30 @@ export function applyOpenAIProviderConfig(cfg: OpenClawConfig): OpenClawConfig {
   };
 }
 
+function applyOpenAIAudioTranscriptionConfig(cfg: OpenClawConfig): OpenClawConfig {
+  const existingAudio = cfg.tools?.media?.audio;
+  if (existingAudio?.enabled === false || existingAudio?.models?.length) {
+    return cfg;
+  }
+
+  return {
+    ...cfg,
+    tools: {
+      ...cfg.tools,
+      media: {
+        ...cfg.tools?.media,
+        audio: {
+          ...existingAudio,
+          models: [OPENAI_AUDIO_TRANSCRIPTION_MODEL],
+        },
+      },
+    },
+  };
+}
+
 export function applyOpenAIConfig(cfg: OpenClawConfig): OpenClawConfig {
-  return applyAgentDefaultModelPrimary(applyOpenAIProviderConfig(cfg), OPENAI_DEFAULT_MODEL);
+  return applyAgentDefaultModelPrimary(
+    applyOpenAIAudioTranscriptionConfig(applyOpenAIProviderConfig(cfg)),
+    OPENAI_DEFAULT_MODEL,
+  );
 }

@@ -17,7 +17,13 @@ import {
   resolveCronRunLogPruneOptions,
 } from "../cron/run-log.js";
 import { CronService } from "../cron/service.js";
+import { resolveCronJobTimeoutMs } from "../cron/service/timeout-policy.js";
 import { resolveCronStorePath } from "../cron/store.js";
+import {
+  assertCronSystemRunAllowed,
+  resolveCronSystemRunError,
+  resolveCronSystemRunSummary,
+} from "../cron/system-run.js";
 import { normalizeHttpWebhookUrl } from "../cron/webhook-url.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { runHeartbeatOnce } from "../infra/heartbeat-runner.js";
@@ -27,6 +33,7 @@ import { SsrFBlockedError } from "../infra/net/ssrf.js";
 import { deliverOutboundPayloads } from "../infra/outbound/deliver.js";
 import { enqueueSystemEvent } from "../infra/system-events.js";
 import { getChildLogger } from "../logging.js";
+import { runCommandWithTimeout } from "../process/exec.js";
 import { normalizeAgentId, toAgentStoreSessionKey } from "../routing/session-key.js";
 import { defaultRuntime } from "../runtime.js";
 
@@ -37,6 +44,7 @@ export type GatewayCronState = {
 };
 
 const CRON_WEBHOOK_TIMEOUT_MS = 10_000;
+const CRON_SYSTEM_RUN_NO_TIMEOUT_MS = 2_147_483_647;
 
 function trimToOptionalString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -301,6 +309,48 @@ export function buildGatewayCronService(params: {
         sessionKey,
         lane: "cron",
       });
+    },
+    runSystemRunJob: async ({ job }) => {
+      if (job.payload.kind !== "systemRun") {
+        return { status: "error", error: 'cron systemRun requires payload.kind="systemRun"' };
+      }
+      const runtimeConfig = loadConfig();
+      try {
+        assertCronSystemRunAllowed({
+          payload: job.payload,
+          cronConfig: runtimeConfig.cron,
+        });
+      } catch (error) {
+        return {
+          status: "error",
+          error: formatErrorMessage(error),
+        };
+      }
+
+      try {
+        const timeoutMs = resolveCronJobTimeoutMs(job);
+        const result = await runCommandWithTimeout(job.payload.command, {
+          timeoutMs: timeoutMs ?? CRON_SYSTEM_RUN_NO_TIMEOUT_MS,
+          cwd: job.payload.cwd,
+          env: job.payload.env,
+        });
+        const status = result.code === 0 ? "ok" : "error";
+        return {
+          status,
+          error: status === "error" ? resolveCronSystemRunError(result) : undefined,
+          summary: resolveCronSystemRunSummary({
+            payload: job.payload,
+            status,
+            stdout: result.stdout,
+            stderr: result.stderr,
+          }),
+        };
+      } catch (error) {
+        return {
+          status: "error",
+          error: `cron systemRun failed: ${formatErrorMessage(error)}`,
+        };
+      }
     },
     sendCronFailureAlert: async ({ job, text, channel, to, mode, accountId }) => {
       const { agentId, cfg: runtimeConfig } = resolveCronAgent(job.agentId);

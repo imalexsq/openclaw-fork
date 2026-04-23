@@ -12,12 +12,21 @@ const {
   loadConfigMock,
   fetchWithSsrFGuardMock,
   runCronIsolatedAgentTurnMock,
+  runCommandWithTimeoutMock,
 } = vi.hoisted(() => ({
   enqueueSystemEventMock: vi.fn(),
   requestHeartbeatNowMock: vi.fn(),
   loadConfigMock: vi.fn(),
   fetchWithSsrFGuardMock: vi.fn(),
   runCronIsolatedAgentTurnMock: vi.fn(async () => ({ status: "ok" as const, summary: "ok" })),
+  runCommandWithTimeoutMock: vi.fn(async () => ({
+    stdout: "ok",
+    stderr: "",
+    code: 0,
+    signal: null,
+    killed: false,
+    termination: "exit" as const,
+  })),
 }));
 
 function enqueueSystemEvent(...args: unknown[]) {
@@ -57,6 +66,16 @@ vi.mock("../cron/isolated-agent.js", () => ({
   runCronIsolatedAgentTurn: runCronIsolatedAgentTurnMock,
 }));
 
+vi.mock("../process/exec.js", async (importOriginal) => {
+  return await mergeMockedModule(
+    await importOriginal<typeof import("../process/exec.js")>(),
+    () => ({
+      runCommandWithTimeout: (...args: unknown[]) =>
+        (runCommandWithTimeoutMock as unknown as (...inner: unknown[]) => unknown)(...args),
+    }),
+  );
+});
+
 import { buildGatewayCronService } from "./server-cron.js";
 
 function createCronConfig(name: string): OpenClawConfig {
@@ -78,6 +97,7 @@ describe("buildGatewayCronService", () => {
     loadConfigMock.mockClear();
     fetchWithSsrFGuardMock.mockClear();
     runCronIsolatedAgentTurnMock.mockClear();
+    runCommandWithTimeoutMock.mockClear();
   });
 
   it("routes main-target jobs to the scoped session for enqueue + wake", async () => {
@@ -198,6 +218,55 @@ describe("buildGatewayCronService", () => {
           sessionKey: "project-alpha-monitor",
         }),
       );
+    } finally {
+      state.cron.stop();
+    }
+  });
+
+  it("executes isolated systemRun jobs through the native runner", async () => {
+    const cfg = createCronConfig("server-cron-system-run");
+    cfg.cron = {
+      ...cfg.cron,
+      systemRun: {
+        allow: [
+          {
+            id: "marketing",
+            argvPrefix: ["python3", "/tmp/runner.py"],
+            cwdPrefix: "/tmp",
+          },
+        ],
+      },
+    };
+    loadConfigMock.mockReturnValue(cfg);
+
+    const state = buildGatewayCronService({
+      cfg,
+      deps: {} as CliDeps,
+      broadcast: () => {},
+    });
+    try {
+      const job = await state.cron.add({
+        name: "system-run",
+        enabled: true,
+        schedule: { kind: "at", at: new Date(1).toISOString() },
+        sessionTarget: "isolated",
+        wakeMode: "next-heartbeat",
+        payload: {
+          kind: "systemRun",
+          command: ["python3", "/tmp/runner.py", "--db-path", "/tmp/db.sqlite3"],
+          cwd: "/tmp/workspace",
+        },
+      });
+
+      await state.cron.run(job.id, "force");
+
+      expect(runCommandWithTimeoutMock).toHaveBeenCalledWith(
+        ["python3", "/tmp/runner.py", "--db-path", "/tmp/db.sqlite3"],
+        expect.objectContaining({
+          cwd: "/tmp/workspace",
+        }),
+      );
+      expect(runCronIsolatedAgentTurnMock).not.toHaveBeenCalled();
     } finally {
       state.cron.stop();
     }

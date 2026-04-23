@@ -40,6 +40,7 @@ export type CronFailureDestination = {
 };
 
 export type CronDeliveryPatch = Partial<CronDelivery>;
+export type CronSystemRunSummaryPolicy = "stdout" | "stderr" | "combined" | "custom";
 
 export type CronRunStatus = "ok" | "error" | "skipped";
 export type CronDeliveryStatus = "delivered" | "not-delivered" | "unknown" | "not-requested";
@@ -79,9 +80,15 @@ export type CronFailureAlert = {
   accountId?: string;
 };
 
-export type CronPayload = { kind: "systemEvent"; text: string } | CronAgentTurnPayload;
+export type CronPayload =
+  | { kind: "systemEvent"; text: string }
+  | CronAgentTurnPayload
+  | CronSystemRunPayload;
 
-export type CronPayloadPatch = { kind: "systemEvent"; text?: string } | CronAgentTurnPayloadPatch;
+export type CronPayloadPatch =
+  | { kind: "systemEvent"; text?: string }
+  | CronAgentTurnPayloadPatch
+  | CronSystemRunPayloadPatch;
 
 type CronAgentTurnPayloadFields = {
   message: string;
@@ -109,6 +116,23 @@ type CronAgentTurnPayload = {
 type CronAgentTurnPayloadPatch = {
   kind: "agentTurn";
 } & Partial<CronAgentTurnPayloadFields>;
+
+type CronSystemRunPayloadFields = {
+  command: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  timeoutSeconds?: number;
+  summaryPolicy?: CronSystemRunSummaryPolicy;
+  successSummary?: string;
+};
+
+type CronSystemRunPayload = {
+  kind: "systemRun";
+} & CronSystemRunPayloadFields;
+
+type CronSystemRunPayloadPatch = {
+  kind: "systemRun";
+} & Partial<CronSystemRunPayloadFields>;
 export type CronJobState = {
   nextRunAtMs?: number;
   runningAtMs?: number;

@@ -14,6 +14,48 @@ import {
   warnIfCronSchedulerDisabled,
 } from "./shared.js";
 
+function parseJsonArrayOfStrings(raw: unknown, flagName: string): string[] {
+  if (typeof raw !== "string" || !raw.trim()) {
+    throw new Error(`${flagName} requires a JSON array of strings`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`${flagName} must be valid JSON`);
+  }
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length === 0 ||
+    parsed.some((value) => typeof value !== "string" || !value.trim())
+  ) {
+    throw new Error(`${flagName} requires a non-empty JSON array of strings`);
+  }
+  return parsed.map((value) => String(value).trim());
+}
+
+function parseJsonStringRecord(raw: unknown, flagName: string): Record<string, string> {
+  if (typeof raw !== "string" || !raw.trim()) {
+    throw new Error(`${flagName} requires a JSON object of string values`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`${flagName} must be valid JSON`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${flagName} requires a JSON object of string values`);
+  }
+  const entries = Object.entries(parsed).map(([key, value]) => {
+    if (typeof value !== "string") {
+      throw new Error(`${flagName} requires all env values to be strings`);
+    }
+    return [key, value] as const;
+  });
+  return Object.fromEntries(entries);
+}
+
 export function registerCronStatusCommand(cron: Command) {
   addGatewayClientOptions(
     cron
@@ -82,12 +124,17 @@ export function registerCronAddCommand(cron: Command) {
       .option("--exact", "Disable cron staggering (set stagger to 0)", false)
       .option("--system-event <text>", "System event payload (main session)")
       .option("--message <text>", "Agent message payload")
+      .option("--system-run-command-json <json>", "systemRun argv payload as JSON array")
+      .option("--cwd <dir>", "Working directory for systemRun jobs")
+      .option("--env-json <json>", "Environment variables for systemRun jobs as JSON object")
+      .option("--summary-policy <policy>", "systemRun summary policy (stdout|stderr|combined|custom)")
+      .option("--success-summary <text>", "Fixed success summary for systemRun jobs")
       .option(
         "--thinking <level>",
         "Thinking level for agent jobs (off|minimal|low|medium|high|xhigh)",
       )
       .option("--model <model>", "Model override for agent jobs (provider/model or alias)")
-      .option("--timeout-seconds <n>", "Timeout seconds for agent jobs")
+      .option("--timeout-seconds <n>", "Timeout seconds for agentTurn/systemRun jobs")
       .option("--light-context", "Use lightweight bootstrap context for agent jobs", false)
       .option("--announce", "Announce summary to a chat (subagent-style)", false)
       .option("--deliver", "Deprecated (use --announce). Announces a summary to a chat.")
@@ -132,14 +179,44 @@ export function registerCronAddCommand(cron: Command) {
           const payload = (() => {
             const systemEvent = typeof opts.systemEvent === "string" ? opts.systemEvent.trim() : "";
             const message = typeof opts.message === "string" ? opts.message.trim() : "";
-            const chosen = [Boolean(systemEvent), Boolean(message)].filter(Boolean).length;
+            const systemRunCommandJson =
+              typeof opts.systemRunCommandJson === "string" ? opts.systemRunCommandJson.trim() : "";
+            const chosen = [Boolean(systemEvent), Boolean(message), Boolean(systemRunCommandJson)].filter(Boolean).length;
             if (chosen !== 1) {
-              throw new Error("Choose exactly one payload: --system-event or --message");
+              throw new Error(
+                "Choose exactly one payload: --system-event, --message, or --system-run-command-json",
+              );
             }
             if (systemEvent) {
               return { kind: "systemEvent" as const, text: systemEvent };
             }
             const timeoutSeconds = parsePositiveIntOrUndefined(opts.timeoutSeconds);
+            if (systemRunCommandJson) {
+              const summaryPolicyRaw =
+                typeof opts.summaryPolicy === "string" ? opts.summaryPolicy.trim().toLowerCase() : "";
+              if (
+                summaryPolicyRaw &&
+                !["stdout", "stderr", "combined", "custom"].includes(summaryPolicyRaw)
+              ) {
+                throw new Error(
+                  "--summary-policy must be one of stdout, stderr, combined, or custom",
+                );
+              }
+              return {
+                kind: "systemRun" as const,
+                command: parseJsonArrayOfStrings(systemRunCommandJson, "--system-run-command-json"),
+                cwd:
+                  typeof opts.cwd === "string" && opts.cwd.trim() ? opts.cwd.trim() : undefined,
+                env: typeof opts.envJson === "string" ? parseJsonStringRecord(opts.envJson, "--env-json") : undefined,
+                timeoutSeconds:
+                  timeoutSeconds && Number.isFinite(timeoutSeconds) ? timeoutSeconds : undefined,
+                summaryPolicy: summaryPolicyRaw || undefined,
+                successSummary:
+                  typeof opts.successSummary === "string" && opts.successSummary.trim()
+                    ? opts.successSummary.trim()
+                    : undefined,
+              };
+            }
             return {
               kind: "agentTurn" as const,
               message,
@@ -161,7 +238,8 @@ export function registerCronAddCommand(cron: Command) {
               : () => undefined;
           const sessionSource = optionSource("session");
           const sessionTargetRaw = typeof opts.session === "string" ? opts.session.trim() : "";
-          const inferredSessionTarget = payload.kind === "agentTurn" ? "isolated" : "main";
+          const inferredSessionTarget =
+            payload.kind === "systemEvent" ? "main" : "isolated";
           const sessionTarget =
             sessionSource === "cli" ? sessionTargetRaw || "" : inferredSessionTarget;
           const isCustomSessionTarget =
@@ -180,14 +258,37 @@ export function registerCronAddCommand(cron: Command) {
           if (sessionTarget === "main" && payload.kind !== "systemEvent") {
             throw new Error("Main jobs require --system-event (systemEvent).");
           }
-          if (isIsolatedLikeSessionTarget && payload.kind !== "agentTurn") {
-            throw new Error("Isolated/current/custom-session jobs require --message (agentTurn).");
+          if (
+            isIsolatedLikeSessionTarget &&
+            payload.kind !== "agentTurn" &&
+            payload.kind !== "systemRun"
+          ) {
+            throw new Error(
+              "Isolated jobs require --message (agentTurn) or --system-run-command-json (systemRun).",
+            );
+          }
+          if (
+            payload.kind === "systemRun" &&
+            sessionTarget !== "isolated"
+          ) {
+            throw new Error("systemRun jobs currently require --session isolated.");
           }
           if (
             (opts.announce || typeof opts.deliver === "boolean") &&
             (!isIsolatedLikeSessionTarget || payload.kind !== "agentTurn")
           ) {
             throw new Error("--announce/--no-deliver require a non-main agentTurn session target.");
+          }
+          if (
+            payload.kind !== "systemRun" &&
+            (typeof opts.cwd === "string" ||
+              typeof opts.envJson === "string" ||
+              typeof opts.summaryPolicy === "string" ||
+              typeof opts.successSummary === "string")
+          ) {
+            throw new Error(
+              "--cwd, --env-json, --summary-policy, and --success-summary require --system-run-command-json",
+            );
           }
 
           const accountId =

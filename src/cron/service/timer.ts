@@ -69,6 +69,9 @@ export async function executeJobCoreWithTimeout(
   job: CronJob,
 ): Promise<Awaited<ReturnType<typeof executeJobCore>>> {
   const jobTimeoutMs = resolveCronJobTimeoutMs(job);
+  if (job.payload.kind === "systemRun") {
+    return await executeJobCore(state, job);
+  }
   if (typeof jobTimeoutMs !== "number") {
     return await executeJobCore(state, job);
   }
@@ -1211,6 +1214,12 @@ export async function executeJobCore(
     }
   }
 
+  if (job.payload.kind === "systemRun") {
+    if (!state.deps.runSystemRunJob) {
+      return { status: "error", error: "cron systemRun execution is not configured" };
+    }
+    return await state.deps.runSystemRunJob({ job, abortSignal });
+  }
   if (job.payload.kind !== "agentTurn") {
     return { status: "skipped", error: "isolated job requires payload.kind=agentTurn" };
   }

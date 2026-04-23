@@ -7,6 +7,7 @@ import {
 import {
   applyOpenAIConfig,
   applyOpenAIProviderConfig,
+  OPENAI_DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
   OPENAI_DEFAULT_MODEL,
 } from "../plugin-sdk/openai.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
@@ -183,6 +184,12 @@ describe("applyOpenAIConfig", () => {
   it("sets default when model is unset", () => {
     const next = applyOpenAIConfig({});
     expect(next.agents?.defaults?.model).toEqual({ primary: OPENAI_DEFAULT_MODEL });
+    expect(next.tools?.media?.audio?.models).toEqual([
+      {
+        provider: "openai",
+        model: OPENAI_DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
+      },
+    ]);
   });
 
   it("overrides model.primary when model object already exists", () => {
@@ -190,6 +197,25 @@ describe("applyOpenAIConfig", () => {
       agents: { defaults: { model: { primary: "anthropic/claude-opus-4-6", fallbacks: [] } } },
     });
     expect(next.agents?.defaults?.model).toEqual({ primary: OPENAI_DEFAULT_MODEL, fallbacks: [] });
+    expect(next.tools?.media?.audio?.models).toEqual([
+      {
+        provider: "openai",
+        model: OPENAI_DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
+      },
+    ]);
+  });
+
+  it("preserves an explicit audio disable", () => {
+    const next = applyOpenAIConfig({
+      tools: {
+        media: {
+          audio: {
+            enabled: false,
+          },
+        },
+      },
+    });
+    expect(next.tools?.media?.audio).toEqual({ enabled: false });
   });
 });
 

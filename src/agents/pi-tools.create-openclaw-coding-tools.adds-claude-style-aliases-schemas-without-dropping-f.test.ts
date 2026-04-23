@@ -116,4 +116,31 @@ describe("createOpenClawCodingTools", () => {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it("flattens a single nested edits entry for edit", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-nested-edit-"));
+    try {
+      const filePath = path.join(tmpDir, "nested-edit.js");
+      await fs.writeFile(filePath, "const value = 'old';\n", "utf8");
+
+      const tools = createOpenClawCodingTools({ workspaceDir: tmpDir });
+      const editTool = tools.find((tool) => tool.name === "edit");
+      expect(editTool).toBeDefined();
+
+      await editTool?.execute("tool-nested-edit", {
+        edits: [
+          {
+            file_path: "nested-edit.js",
+            oldText: [{ type: "text", text: "old" }],
+            newText: [{ kind: "text", value: "new" }],
+          },
+        ],
+      });
+
+      const edited = await fs.readFile(filePath, "utf8");
+      expect(edited).toBe("const value = 'new';\n");
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

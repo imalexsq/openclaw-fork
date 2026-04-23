@@ -27,6 +27,18 @@ export type CronFailureDestinationConfig = {
   mode?: "announce" | "webhook";
 };
 
+export type CronSystemRunAllowEntry = {
+  id: string;
+  argvPrefix: string[];
+  cwdPrefix?: string;
+  envAllowlist?: string[];
+  description?: string;
+};
+
+export type CronSystemRunConfig = {
+  allow?: CronSystemRunAllowEntry[];
+};
+
 export type CronConfig = {
   enabled?: boolean;
   store?: string;
@@ -57,4 +69,6 @@ export type CronConfig = {
   failureAlert?: CronFailureAlertConfig;
   /** Default destination for failure notifications across all cron jobs. */
   failureDestination?: CronFailureDestinationConfig;
+  /** Native cron command runners that may execute via payload.kind="systemRun". */
+  systemRun?: CronSystemRunConfig;
 };

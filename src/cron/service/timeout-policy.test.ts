@@ -7,7 +7,12 @@ import {
 } from "./timeout-policy.js";
 
 function makeJob(payload: CronJob["payload"]): CronJob {
-  const sessionTarget = payload.kind === "agentTurn" ? "isolated" : "main";
+  const sessionTarget =
+    payload.kind === "systemEvent"
+      ? "main"
+      : payload.kind === "agentTurn" || payload.kind === "systemRun"
+        ? "isolated"
+        : "main";
   return {
     id: "job-1",
     name: "job",
@@ -45,5 +50,12 @@ describe("timeout-policy", () => {
       makeJob({ kind: "agentTurn", message: "hi", timeoutSeconds: 1.9 }),
     );
     expect(timeout).toBe(1_900);
+  });
+
+  it("applies explicit timeoutSeconds for systemRun jobs", () => {
+    const timeout = resolveCronJobTimeoutMs(
+      makeJob({ kind: "systemRun", command: ["python3", "runner.py"], timeoutSeconds: 3 }),
+    );
+    expect(timeout).toBe(3_000);
   });
 });

@@ -21,6 +21,13 @@ import {
   shouldSkipMessageByAbortCutoff,
 } from "./abort-cutoff.js";
 import { getAbortMemory, isAbortRequestText } from "./abort-primitives.js";
+import {
+  extractMarketingCallbackPayload,
+  isMarketingCallbackCommand,
+  isMarketingCronTrigger,
+  isMarketingGoTrigger,
+  isPotentialMarketingRefinementInput,
+} from "./commands-marketing.js";
 import type { buildStatusReply, handleCommands } from "./commands.runtime.js";
 import type { InlineDirectives } from "./directive-handling.parse.js";
 import { isDirectiveOnly } from "./directive-handling.parse.js";
@@ -446,7 +453,12 @@ export async function handleInlineActions(params: {
     inlineCommand !== null ||
     directiveAck !== undefined ||
     inlineStatusRequested ||
-    command.commandBodyNormalized.trim().startsWith("/");
+    command.commandBodyNormalized.trim().startsWith("/") ||
+    isMarketingCronTrigger(command.commandBodyNormalized) ||
+    isMarketingGoTrigger(command.commandBodyNormalized) ||
+    isPotentialMarketingRefinementInput(command.commandBodyNormalized, workspaceDir) ||
+    (extractMarketingCallbackPayload(command.commandBodyNormalized) !== null &&
+      isMarketingCallbackCommand(command.commandBodyNormalized));
   if (!shouldRunCommandHandlers) {
     return {
       kind: "continue",

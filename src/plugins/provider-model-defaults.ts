@@ -13,6 +13,11 @@ export const GOOGLE_GEMINI_DEFAULT_MODEL = "google/gemini-3.1-pro-preview";
 export const OPENCODE_GO_DEFAULT_MODEL_REF = "opencode-go/kimi-k2.5";
 export const OPENCODE_ZEN_DEFAULT_MODEL = "opencode/claude-opus-4-6";
 
+const OPENAI_AUDIO_TRANSCRIPTION_MODEL = {
+  provider: "openai",
+  model: OPENAI_DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
+} as const;
+
 const LEGACY_OPENCODE_ZEN_DEFAULT_MODELS = new Set([
   "opencode/claude-opus-4-5",
   "opencode-zen/claude-opus-4-5",
@@ -48,8 +53,29 @@ export function applyOpenAIProviderConfig(cfg: OpenClawConfig): OpenClawConfig {
   };
 }
 
+function applyOpenAIAudioTranscriptionConfig(cfg: OpenClawConfig): OpenClawConfig {
+  const existingAudio = cfg.tools?.media?.audio;
+  if (existingAudio?.enabled === false || existingAudio?.models?.length) {
+    return cfg;
+  }
+
+  return {
+    ...cfg,
+    tools: {
+      ...cfg.tools,
+      media: {
+        ...cfg.tools?.media,
+        audio: {
+          ...existingAudio,
+          models: [OPENAI_AUDIO_TRANSCRIPTION_MODEL],
+        },
+      },
+    },
+  };
+}
+
 export function applyOpenAIConfig(cfg: OpenClawConfig): OpenClawConfig {
-  const next = applyOpenAIProviderConfig(cfg);
+  const next = applyOpenAIAudioTranscriptionConfig(applyOpenAIProviderConfig(cfg));
   return {
     ...next,
     agents: {

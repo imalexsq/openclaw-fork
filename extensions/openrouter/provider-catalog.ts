@@ -2,6 +2,7 @@ import type { ModelProviderConfig } from "openclaw/plugin-sdk/provider-model-sha
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const OPENROUTER_DEFAULT_MODEL_ID = "auto";
+export const OPENROUTER_STEPFUN_MODEL_ID = "stepfun/step-3.5-flash:nitro";
 const OPENROUTER_DEFAULT_CONTEXT_WINDOW = 200000;
 const OPENROUTER_DEFAULT_MAX_TOKENS = 8192;
 const OPENROUTER_DEFAULT_COST = {
@@ -24,6 +25,20 @@ export function buildOpenrouterProvider(): ModelProviderConfig {
         cost: OPENROUTER_DEFAULT_COST,
         contextWindow: OPENROUTER_DEFAULT_CONTEXT_WINDOW,
         maxTokens: OPENROUTER_DEFAULT_MAX_TOKENS,
+      },
+      {
+        id: OPENROUTER_STEPFUN_MODEL_ID,
+        name: "StepFun: Step 3.5 Flash",
+        reasoning: true,
+        input: ["text"],
+        cost: {
+          input: 0.1,
+          output: 0.3,
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+        contextWindow: 262144,
+        maxTokens: 8192,
       },
       {
         id: "openrouter/hunter-alpha",

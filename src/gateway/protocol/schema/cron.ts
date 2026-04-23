@@ -21,6 +21,28 @@ function cronAgentTurnPayloadSchema(params: { message: TSchema }) {
   );
 }
 
+function cronSystemRunPayloadSchema(params: { command: TSchema }) {
+  return Type.Object(
+    {
+      kind: Type.Literal("systemRun"),
+      command: params.command,
+      cwd: Type.Optional(Type.String()),
+      env: Type.Optional(Type.Record(Type.String(), Type.String())),
+      timeoutSeconds: Type.Optional(Type.Integer({ minimum: 0 })),
+      summaryPolicy: Type.Optional(
+        Type.Union([
+          Type.Literal("stdout"),
+          Type.Literal("stderr"),
+          Type.Literal("combined"),
+          Type.Literal("custom"),
+        ]),
+      ),
+      successSummary: Type.Optional(Type.String()),
+    },
+    { additionalProperties: false },
+  );
+}
+
 const CronSessionTargetSchema = Type.Union([
   Type.Literal("main"),
   Type.Literal("isolated"),
@@ -139,6 +161,9 @@ export const CronPayloadSchema = Type.Union([
     { additionalProperties: false },
   ),
   cronAgentTurnPayloadSchema({ message: NonEmptyString }),
+  cronSystemRunPayloadSchema({
+    command: Type.Array(NonEmptyString, { minItems: 1 }),
+  }),
 ]);
 
 export const CronPayloadPatchSchema = Type.Union([
@@ -150,6 +175,9 @@ export const CronPayloadPatchSchema = Type.Union([
     { additionalProperties: false },
   ),
   cronAgentTurnPayloadSchema({ message: Type.Optional(NonEmptyString) }),
+  cronSystemRunPayloadSchema({
+    command: Type.Optional(Type.Array(NonEmptyString, { minItems: 1 })),
+  }),
 ]);
 
 export const CronFailureAlertSchema = Type.Object(

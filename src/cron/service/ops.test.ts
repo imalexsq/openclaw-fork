@@ -46,6 +46,24 @@ function createDueIsolatedJob(now: number): CronJob {
   };
 }
 
+function createDueSystemRunJob(now: number): CronJob {
+  return {
+    id: "system-run-job",
+    name: "system run",
+    enabled: true,
+    createdAtMs: now - 60_000,
+    updatedAtMs: now - 60_000,
+    schedule: { kind: "every", everyMs: 60_000, anchorMs: now - 60_000 },
+    sessionTarget: "isolated",
+    wakeMode: "next-heartbeat",
+    payload: {
+      kind: "systemRun",
+      command: ["python3", "runner.py"],
+    },
+    state: { nextRunAtMs: now - 1 },
+  };
+}
+
 function createMissedIsolatedJob(now: number): CronJob {
   return {
     id: "startup-timeout",
@@ -194,6 +212,38 @@ describe("cron service ops seam coverage", () => {
     );
 
     createTaskRecordSpy.mockRestore();
+  });
+
+  it("routes manual systemRun jobs through the native command runner", async () => {
+    const { storePath } = await makeStorePath();
+    const now = Date.parse("2026-03-23T12:00:00.000Z");
+
+    await writeCronStoreSnapshot({
+      storePath,
+      jobs: [createDueSystemRunJob(now)],
+    });
+
+    const runIsolatedAgentJob = vi.fn(async () => ({ status: "ok" as const, summary: "wrong" }));
+    const runSystemRunJob = vi.fn(async () => ({ status: "ok" as const, summary: "native ok" }));
+
+    const state = createCronServiceState({
+      storePath,
+      cronEnabled: true,
+      log: logger,
+      nowMs: () => now,
+      enqueueSystemEvent: vi.fn(),
+      requestHeartbeatNow: vi.fn(),
+      runIsolatedAgentJob,
+      runSystemRunJob,
+    });
+
+    await expect(run(state, "system-run-job")).resolves.toEqual({ ok: true, ran: true });
+    expect(runSystemRunJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        job: expect.objectContaining({ id: "system-run-job" }),
+      }),
+    );
+    expect(runIsolatedAgentJob).not.toHaveBeenCalled();
   });
 
   it("keeps manual cron cleanup progressing when task ledger updates fail", async () => {

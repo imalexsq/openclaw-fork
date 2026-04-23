@@ -15,6 +15,12 @@ import {
   handleWhoamiCommand,
 } from "./commands-info.js";
 import { handleMcpCommand } from "./commands-mcp.js";
+import {
+  handleMarketingCallbackCommand,
+  handleMarketingCronCommand,
+  handleMarketingGoCommand,
+  handleMarketingRefinementCommand,
+} from "./commands-marketing.js";
 import { handleModelsCommand } from "./commands-models.js";
 import { handlePluginCommand } from "./commands-plugin.js";
 import { handlePluginsCommand } from "./commands-plugins.js";
@@ -55,7 +61,11 @@ export function loadCommandHandlers(): CommandHandler[] {
     handleWhoamiCommand,
     handleSubagentsCommand,
     handleAcpCommand,
+    handleMarketingCronCommand,
+    handleMarketingRefinementCommand,
     handleMcpCommand,
+    handleMarketingGoCommand,
+    handleMarketingCallbackCommand,
     handlePluginsCommand,
     handleConfigCommand,
     handleDebugCommand,

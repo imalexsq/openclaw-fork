@@ -31,6 +31,7 @@ import {
   normalizeRequiredName,
 } from "./normalize.js";
 import type { CronServiceState } from "./state.js";
+import { assertCronSystemRunAllowed } from "../system-run.js";
 
 const STUCK_RUN_MS = 2 * 60 * 60 * 1000;
 const STAGGER_OFFSET_CACHE_MAX = 4096;
@@ -139,8 +140,19 @@ export function assertSupportedJobSpec(job: Pick<CronJob, "sessionTarget" | "pay
   if (job.sessionTarget === "main" && job.payload.kind !== "systemEvent") {
     throw new Error('main cron jobs require payload.kind="systemEvent"');
   }
-  if (isIsolatedLike && job.payload.kind !== "agentTurn") {
-    throw new Error('isolated/current/session cron jobs require payload.kind="agentTurn"');
+  if (job.payload.kind === "systemRun" && job.sessionTarget !== "isolated") {
+    throw new Error('payload.kind="systemRun" requires sessionTarget="isolated"');
+  }
+  if (
+    (job.sessionTarget === "current" || job.sessionTarget.startsWith("session:")) &&
+    job.payload.kind !== "agentTurn"
+  ) {
+    throw new Error('current/session cron jobs require payload.kind="agentTurn"');
+  }
+  if (job.sessionTarget === "isolated" && !["agentTurn", "systemRun"].includes(job.payload.kind)) {
+    throw new Error(
+      'isolated cron jobs require payload.kind="agentTurn" or payload.kind="systemRun"',
+    );
   }
 }
 
@@ -180,10 +192,13 @@ function validateTelegramDeliveryTarget(to: string | undefined): string | undefi
   return undefined;
 }
 
-function assertDeliverySupport(job: Pick<CronJob, "sessionTarget" | "delivery">) {
+function assertDeliverySupport(job: Pick<CronJob, "sessionTarget" | "delivery" | "payload">) {
   // No delivery object or mode is "none" -- nothing to validate.
   if (!job.delivery || job.delivery.mode === "none") {
     return;
+  }
+  if (job.payload.kind === "systemRun") {
+    throw new Error('payload.kind="systemRun" only supports delivery.mode="none"');
   }
   // Webhook delivery is allowed for any session target
   if (job.delivery.mode === "webhook") {
@@ -207,6 +222,13 @@ function assertDeliverySupport(job: Pick<CronJob, "sessionTarget" | "delivery">)
       throw new Error(telegramError);
     }
   }
+}
+
+function assertSystemRunSupport(state: CronServiceState, job: Pick<CronJob, "payload">) {
+  if (job.payload.kind !== "systemRun") {
+    return;
+  }
+  assertCronSystemRunAllowed({ payload: job.payload, cronConfig: state.deps.cronConfig });
 }
 
 function assertFailureDestinationSupport(job: Pick<CronJob, "sessionTarget" | "delivery">) {
@@ -564,6 +586,7 @@ export function createJob(state: CronServiceState, input: CronJobCreate): CronJo
   assertMainSessionAgentId(job, state.deps.defaultAgentId);
   assertDeliverySupport(job);
   assertFailureDestinationSupport(job);
+  assertSystemRunSupport(state, job);
   job.state.nextRunAtMs = computeJobNextRunAtMs(job, now);
   return job;
 }
@@ -571,7 +594,7 @@ export function createJob(state: CronServiceState, input: CronJobCreate): CronJo
 export function applyJobPatch(
   job: CronJob,
   patch: CronJobPatch,
-  opts?: { defaultAgentId?: string },
+  opts?: { defaultAgentId?: string; cronConfig?: CronServiceState["deps"]["cronConfig"] },
 ) {
   if ("name" in patch) {
     job.name = normalizeRequiredName(patch.name);
@@ -654,6 +677,9 @@ export function applyJobPatch(
   assertMainSessionAgentId(job, opts?.defaultAgentId);
   assertDeliverySupport(job);
   assertFailureDestinationSupport(job);
+  if (job.payload.kind === "systemRun") {
+    assertCronSystemRunAllowed({ payload: job.payload, cronConfig: opts?.cronConfig });
+  }
 }
 
 function mergeCronPayload(existing: CronPayload, patch: CronPayloadPatch): CronPayload {
@@ -669,8 +695,27 @@ function mergeCronPayload(existing: CronPayload, patch: CronPayloadPatch): CronP
     return { kind: "systemEvent", text };
   }
 
-  if (existing.kind !== "agentTurn") {
-    return buildPayloadFromPatch(patch);
+  if (existing.kind === "systemRun" && patch.kind === "systemRun") {
+    const next: Extract<CronPayload, { kind: "systemRun" }> = { ...existing };
+    if (Array.isArray(patch.command) && patch.command.length > 0) {
+      next.command = patch.command;
+    }
+    if (typeof patch.cwd === "string") {
+      next.cwd = patch.cwd;
+    }
+    if (patch.env) {
+      next.env = patch.env;
+    }
+    if (typeof patch.timeoutSeconds === "number") {
+      next.timeoutSeconds = patch.timeoutSeconds;
+    }
+    if (typeof patch.summaryPolicy === "string") {
+      next.summaryPolicy = patch.summaryPolicy;
+    }
+    if (typeof patch.successSummary === "string") {
+      next.successSummary = patch.successSummary;
+    }
+    return next;
   }
 
   const next: Extract<CronPayload, { kind: "agentTurn" }> = { ...existing };
@@ -754,6 +799,21 @@ function buildPayloadFromPatch(patch: CronPayloadPatch): CronPayload {
       throw new Error('cron.update payload.kind="systemEvent" requires text');
     }
     return { kind: "systemEvent", text: patch.text };
+  }
+
+  if (patch.kind === "systemRun") {
+    if (!Array.isArray(patch.command) || patch.command.length === 0) {
+      throw new Error('cron.update payload.kind="systemRun" requires command');
+    }
+    return {
+      kind: "systemRun",
+      command: patch.command,
+      cwd: patch.cwd,
+      env: patch.env,
+      timeoutSeconds: patch.timeoutSeconds,
+      summaryPolicy: patch.summaryPolicy,
+      successSummary: patch.successSummary,
+    };
   }
 
   if (typeof patch.message !== "string" || patch.message.length === 0) {

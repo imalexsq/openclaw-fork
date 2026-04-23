@@ -36,7 +36,7 @@ const { registerCronCli } = await import("./cron-cli.js");
 type CronUpdatePatch = {
   patch?: {
     schedule?: { kind?: string; expr?: string; tz?: string; staggerMs?: number };
-    payload?: {
+    payload?: Record<string, unknown> & {
       kind?: string;
       message?: string;
       model?: string;
@@ -55,7 +55,7 @@ type CronUpdatePatch = {
 
 type CronAddParams = {
   schedule?: { kind?: string; staggerMs?: number };
-  payload?: { model?: string; thinking?: string; lightContext?: boolean };
+  payload?: Record<string, unknown> & { model?: string; thinking?: string; lightContext?: boolean };
   delivery?: { mode?: string; accountId?: string };
   deleteAfterRun?: boolean;
   agentId?: string;
@@ -243,6 +243,38 @@ describe("cron cli", () => {
     expect(params?.payload?.thinking).toBe("low");
   });
 
+  it("accepts systemRun payloads on cron add", async () => {
+    const params = await runCronAddAndGetParams([
+      "--name",
+      "Marketing runner",
+      "--cron",
+      "* * * * *",
+      "--session",
+      "isolated",
+      "--system-run-command-json",
+      '["python3","runner.py","--db-path","/tmp/db.sqlite3"]',
+      "--cwd",
+      "/tmp/workspace",
+      "--env-json",
+      '{"OPENCLAW_ENV":"prod"}',
+      "--summary-policy",
+      "combined",
+      "--success-summary",
+      "Runner finished",
+    ]);
+
+    expect(params?.sessionTarget).toBe("isolated");
+    expect(params?.payload).toMatchObject({
+      kind: "systemRun",
+      command: ["python3", "runner.py", "--db-path", "/tmp/db.sqlite3"],
+      cwd: "/tmp/workspace",
+      env: { OPENCLAW_ENV: "prod" },
+      summaryPolicy: "combined",
+      successSummary: "Runner finished",
+    });
+    expect(params?.delivery).toBeUndefined();
+  });
+
   it("defaults isolated cron add to announce delivery", async () => {
     await runCronCommand([
       "cron",
@@ -261,6 +293,30 @@ describe("cron cli", () => {
     const params = addCall?.[2] as { delivery?: { mode?: string } };
 
     expect(params?.delivery?.mode).toBe("announce");
+  });
+
+  it("supports systemRun payload patches on cron edit", async () => {
+    const patch = await runCronEditAndGetPatch([
+      "--system-run-command-json",
+      '["python3","runner.py"]',
+      "--cwd",
+      "/tmp/workspace",
+      "--env-json",
+      '{"OPENCLAW_ENV":"prod"}',
+      "--summary-policy",
+      "stdout",
+      "--success-summary",
+      "ok",
+    ]);
+
+    expect(patch.patch?.payload).toMatchObject({
+      kind: "systemRun",
+      command: ["python3", "runner.py"],
+      cwd: "/tmp/workspace",
+      env: { OPENCLAW_ENV: "prod" },
+      summaryPolicy: "stdout",
+      successSummary: "ok",
+    });
   });
 
   it("infers sessionTarget from payload when --session is omitted", async () => {

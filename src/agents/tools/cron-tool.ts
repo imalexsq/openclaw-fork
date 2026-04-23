@@ -238,13 +238,14 @@ JOB SCHEMA (for add action):
 
 SESSION TARGET OPTIONS:
 - "main": Run in the main session (requires payload.kind="systemEvent")
-- "isolated": Run in an ephemeral isolated session (requires payload.kind="agentTurn")
+- "isolated": Run in an ephemeral isolated session (requires payload.kind="agentTurn" or "systemRun")
 - "current": Bind to the current session where the cron is created (resolved at creation time)
 - "session:<custom-id>": Run in a persistent named session (e.g., "session:project-alpha-daily")
 
 DEFAULT BEHAVIOR (unchanged for backward compatibility):
 - payload.kind="systemEvent" → defaults to "main"
 - payload.kind="agentTurn" → defaults to "isolated"
+- payload.kind="systemRun" → defaults to "isolated"
 To use current session binding, explicitly set sessionTarget="current".
 
 SCHEDULE TYPES (schedule.kind):
@@ -262,6 +263,8 @@ PAYLOAD TYPES (payload.kind):
   { "kind": "systemEvent", "text": "<message>" }
 - "agentTurn": Runs agent with message (isolated sessions only)
   { "kind": "agentTurn", "message": "<prompt>", "model": "<optional>", "thinking": "<optional>", "timeoutSeconds": <optional, 0 means no timeout> }
+- "systemRun": Runs an allowlisted native command without invoking the model (isolated jobs only)
+  { "kind": "systemRun", "command": ["python3", "runner.py"], "cwd": "<optional>", "env": { "KEY": "value" }, "timeoutSeconds": <optional>, "summaryPolicy": "stdout|stderr|combined|custom", "successSummary": "<optional>" }
 
 DELIVERY (top-level):
   { "mode": "none|announce|webhook", "channel": "<optional>", "to": "<optional>", "bestEffort": <optional-bool> }
@@ -272,7 +275,8 @@ DELIVERY (top-level):
 
 CRITICAL CONSTRAINTS:
 - sessionTarget="main" REQUIRES payload.kind="systemEvent"
-- sessionTarget="isolated" | "current" | "session:xxx" REQUIRES payload.kind="agentTurn"
+- sessionTarget="isolated" REQUIRES payload.kind="agentTurn" or "systemRun"
+- sessionTarget="current" | "session:xxx" REQUIRES payload.kind="agentTurn"
 - For webhook callbacks, use delivery.mode="webhook" with delivery.to set to a URL.
 Default: prefer isolated agentTurn jobs unless the user explicitly wants current-session binding.
 

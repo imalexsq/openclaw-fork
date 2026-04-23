@@ -194,9 +194,18 @@ export function stripStructuralPrefixes(text: string): string {
     ? text.slice(text.indexOf(CURRENT_MESSAGE_MARKER) + CURRENT_MESSAGE_MARKER.length).trimStart()
     : text;
 
-  return afterMarker
+  const normalizedLines = afterMarker.split(/\r?\n/).map((line) => {
+    const trimmed = line.trimStart();
+    // Preserve callback payloads that should be routed as commands later.
+    if (/^mkt:/i.test(trimmed)) {
+      return trimmed;
+    }
+    return line.replace(/^[ \t]*[A-Za-z0-9+()\-_. ]+:\s*/g, "");
+  });
+
+  return normalizedLines
+    .join("\n")
     .replace(/\[[^\]]+\]\s*/g, "")
-    .replace(/^[ \t]*[A-Za-z0-9+()\-_. ]+:\s*/gm, "")
     .replace(/\\n/g, " ")
     .replace(/\s+/g, " ")
     .trim();

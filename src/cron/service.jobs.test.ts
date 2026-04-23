@@ -214,6 +214,25 @@ describe("applyJobPatch", () => {
     }
   });
 
+  it("rejects systemRun delivery patches and non-isolated systemRun targets", () => {
+    const job = createIsolatedAgentTurnJob("job-system-run", undefined);
+
+    expect(() =>
+      applyJobPatch(job, {
+        sessionTarget: "isolated",
+        payload: { kind: "systemRun", command: ["python3", "/tmp/runner.py"] },
+        delivery: { mode: "announce" },
+      }),
+    ).toThrow('payload.kind="systemRun" only supports delivery.mode="none"');
+
+    expect(() =>
+      applyJobPatch(job, {
+        sessionTarget: "session:ops",
+        payload: { kind: "systemRun", command: ["python3", "/tmp/runner.py"] },
+      }),
+    ).toThrow('payload.kind="systemRun" requires sessionTarget="isolated"');
+  });
+
   it.each([
     { name: "no delivery update", patch: { enabled: true } satisfies CronJobPatch },
     {
@@ -329,6 +348,17 @@ function createMockState(now: number, opts?: { defaultAgentId?: string }): CronS
     deps: {
       nowMs: () => now,
       defaultAgentId: opts?.defaultAgentId,
+      cronEnabled: true,
+      storePath: "/tmp/cron.json",
+      enqueueSystemEvent: () => {},
+      requestHeartbeatNow: () => {},
+      runIsolatedAgentJob: async () => ({ status: "ok" }),
+      log: {
+        debug: () => {},
+        info: () => {},
+        warn: () => {},
+        error: () => {},
+      },
     },
   } as unknown as CronServiceState;
 }
@@ -559,5 +589,50 @@ describe("createJob delivery defaults", () => {
       payload: { kind: "systemEvent", text: "ping" },
     });
     expect(job.delivery).toBeUndefined();
+  });
+
+  it("requires allowlisted systemRun commands and leaves delivery unset", () => {
+    const now = Date.parse("2026-02-28T12:00:00.000Z");
+    const state = createMockState(now);
+    state.deps.cronConfig = {
+      systemRun: {
+        allow: [
+          {
+            id: "marketing",
+            argvPrefix: ["python3", "/tmp/runner.py"],
+            cwdPrefix: "/tmp",
+          },
+        ],
+      },
+    };
+
+    const allowed = createJob(state, {
+      name: "system-run",
+      enabled: true,
+      schedule: { kind: "every", everyMs: 60_000 },
+      sessionTarget: "isolated",
+      wakeMode: "now",
+      payload: {
+        kind: "systemRun",
+        command: ["python3", "/tmp/runner.py", "--db-path", "/tmp/db.sqlite3"],
+        cwd: "/tmp/workspace",
+      },
+    });
+    expect(allowed.delivery).toBeUndefined();
+
+    expect(() =>
+      createJob(state, {
+        name: "blocked-system-run",
+        enabled: true,
+        schedule: { kind: "every", everyMs: 60_000 },
+        sessionTarget: "isolated",
+        wakeMode: "now",
+        payload: {
+          kind: "systemRun",
+          command: ["python3", "/tmp/not-allowed.py"],
+          cwd: "/tmp/workspace",
+        },
+      }),
+    ).toThrow("cron systemRun command is not allowlisted");
   });
 });

@@ -108,4 +108,24 @@ describe("resolveModelAuthLabel", () => {
 
     expect(label).toBe("oauth (anthropic:oauth)");
   });
+
+  it("shows the resolved custom provider source label", () => {
+    mocks.ensureAuthProfileStore.mockReturnValue({
+      version: 1,
+      profiles: {},
+    } as never);
+    mocks.resolveAuthProfileOrder.mockReturnValue([]);
+    mocks.resolveUsableCustomProviderApiKey.mockReturnValue({
+      apiKey: "sk-custom-runtime",
+      source: "openclaw.json",
+    });
+
+    const label = resolveModelAuthLabel({
+      provider: "openrouter",
+      cfg: {},
+    });
+
+    expect(label).toBe("api-key (openclaw.json)");
+    expect(label).not.toContain("sk-custom-runtime");
+  });
 });

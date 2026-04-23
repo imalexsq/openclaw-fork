@@ -89,6 +89,17 @@ vi.mock("../../gateway/call.js", () => ({
   callGateway: callGatewayMock,
 }));
 
+const runExecMock = vi.hoisted(() => vi.fn());
+vi.mock("../../process/exec.js", async () => {
+  const actual = await vi.importActual<typeof import("../../process/exec.js")>(
+    "../../process/exec.js",
+  );
+  return {
+    ...actual,
+    runExec: runExecMock,
+  };
+});
+
 import type { HandleCommandsParams } from "./commands-types.js";
 
 // Avoid expensive workspace scans during /context tests.
@@ -128,6 +139,14 @@ const { extractMessageText } = await import("./commands-subagents.js");
 const { buildCommandTestParams } = await import("./commands.test-harness.js");
 const { parseConfigCommand } = await import("./config-commands.js");
 const { parseDebugCommand } = await import("./debug-commands.js");
+const {
+  isMarketingCronTrigger,
+  isMarketingGoTrigger,
+  isPotentialMarketingRefinementInput,
+  parseMarketingCallbackCommand,
+} = await import(
+  "./commands-marketing.js"
+);
 const { parseInlineDirectives } = await import("./directive-handling.js");
 const { buildCommandContext, handleCommands } = await import("./commands.js");
 
@@ -136,6 +155,24 @@ let testWorkspaceDir = os.tmpdir();
 beforeAll(async () => {
   testWorkspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-commands-"));
   await fs.writeFile(path.join(testWorkspaceDir, "AGENTS.md"), "# Agents\n", "utf-8");
+  await fs.mkdir(path.join(testWorkspaceDir, "skills", "jewelry-content", "scripts"), {
+    recursive: true,
+  });
+  await fs.writeFile(
+    path.join(testWorkspaceDir, "skills", "jewelry-content", "scripts", "publish_content.py"),
+    "#!/usr/bin/env python3\n",
+    "utf-8",
+  );
+  await fs.writeFile(
+    path.join(testWorkspaceDir, "skills", "jewelry-content", "scripts", "go_flow.py"),
+    "#!/usr/bin/env python3\n",
+    "utf-8",
+  );
+  await fs.writeFile(
+    path.join(testWorkspaceDir, "skills", "jewelry-content", "scripts", "send_review_cards.py"),
+    "#!/usr/bin/env python3\n",
+    "utf-8",
+  );
 });
 
 afterAll(async () => {
@@ -173,6 +210,28 @@ beforeEach(() => {
   readChannelAllowFromStoreMock.mockResolvedValue([]);
   addChannelAllowFromStoreEntryMock.mockResolvedValue({ changed: true, allowFrom: [] });
   removeChannelAllowFromStoreEntryMock.mockResolvedValue({ changed: true, allowFrom: [] });
+  runExecMock.mockReset();
+});
+
+beforeEach(async () => {
+  await fs.rm(
+    path.join(testWorkspaceDir, "skills", "jewelry-content", "scripts", "refine_content.py"),
+    {
+      force: true,
+    },
+  );
+  await fs.rm(
+    path.join(
+      testWorkspaceDir,
+      "skills",
+      "jewelry-content",
+      "scripts",
+      "marketing_publish_cron_runner.py",
+    ),
+    {
+      force: true,
+    },
+  );
 });
 
 async function withTempConfigPath<T>(
@@ -1320,6 +1379,24 @@ describe("parseConfigCommand", () => {
       },
       { parse: parseDebugCommand, input: "/debug", expected: { action: "show" } },
       { parse: parseDebugCommand, input: "/debug show", expected: { action: "show" } },
+      { parse: parseDebugCommand, input: "/debug buttons", expected: { action: "buttons" } },
+      { parse: parseDebugCommand, input: "/debug buttons ack", expected: { action: "buttons-ack" } },
+      { parse: parseDebugCommand, input: "/debug reviewcard", expected: { action: "reviewcard" } },
+      {
+        parse: parseDebugCommand,
+        input: "/debug reviewcard approve",
+        expected: { action: "reviewcard-action", button: "approve" },
+      },
+      {
+        parse: parseDebugCommand,
+        input: "/debug reviewcard dry-run",
+        expected: { action: "reviewcard-action", button: "dry" },
+      },
+      {
+        parse: parseDebugCommand,
+        input: "/debug reviewcard queue-live",
+        expected: { action: "reviewcard-action", button: "live" },
+      },
       { parse: parseDebugCommand, input: "/debug reset", expected: { action: "reset" } },
       {
         parse: parseDebugCommand,
@@ -2200,6 +2277,443 @@ describe("handleCommands /allowlist", () => {
       expect(result.shouldContinue).toBe(false);
       expect(result.reply?.text).toContain("Channel: telegram");
     });
+  });
+});
+
+describe("/debug Telegram button smoke tests", () => {
+  const cfg = {
+    commands: { debug: true, text: true },
+  } as OpenClawConfig;
+
+  it("returns a deterministic Telegram smoke-test card", async () => {
+    const params = buildPolicyParams("/debug buttons", cfg, {
+      Provider: "telegram",
+      Surface: "telegram",
+    });
+    params.command.senderIsOwner = true;
+
+    const result = await handleCommands(params);
+
+    expect(result.shouldContinue).toBe(false);
+    expect(result.reply?.text).toContain("Debug button smoke test");
+    expect(result.reply?.channelData).toEqual({
+      telegram: {
+        buttons: [[{ text: "Ack", callback_data: "/debug buttons ack", style: "success" }]],
+      },
+    });
+  });
+
+  it("acknowledges debug button callbacks", async () => {
+    const params = buildPolicyParams("/debug buttons ack", cfg, {
+      Provider: "telegram",
+      Surface: "telegram",
+    });
+    params.command.senderIsOwner = true;
+
+    const result = await handleCommands(params);
+
+    expect(result.shouldContinue).toBe(false);
+    expect(result.reply?.text).toContain("callback received");
+  });
+
+  it("returns a sample review card with the production button layout", async () => {
+    const params = buildPolicyParams("/debug reviewcard", cfg, {
+      Provider: "telegram",
+      Surface: "telegram",
+    });
+    params.command.senderIsOwner = true;
+
+    const result = await handleCommands(params);
+    const buttons = (result.reply?.channelData as { telegram?: { buttons?: unknown[][] } })?.telegram
+      ?.buttons;
+
+    expect(result.shouldContinue).toBe(false);
+    expect(result.reply?.text).toContain("Instagram draft");
+    expect(buttons).toEqual([
+      [
+        { text: "Approve", callback_data: "/debug reviewcard approve", style: "success" },
+        { text: "Reject", callback_data: "/debug reviewcard reject", style: "danger" },
+      ],
+      [{ text: "Queue Live", callback_data: "/debug reviewcard live", style: "primary" }],
+      [
+        { text: "Status", callback_data: "/debug reviewcard status" },
+        { text: "Reschedule", callback_data: "/debug reviewcard reschedule" },
+      ],
+    ]);
+  });
+});
+
+describe("marketing callback commands", () => {
+  const cfg = {
+    commands: { text: true },
+  } as OpenClawConfig;
+
+  it("parses marketing callback payloads", () => {
+    expect(parseMarketingCallbackCommand("mkt:approve:instagram:2:3")).toEqual({
+      action: "approve",
+      platform: "instagram",
+      submissionId: 2,
+      contentId: 3,
+    });
+    expect(
+      parseMarketingCallbackCommand(
+        'Conversation info\n```json\n{"topic_id":"22"}\n```\n\nmkt:status:2:3',
+      ),
+    ).toEqual({
+      action: "status",
+      submissionId: 2,
+      contentId: 3,
+    });
+    expect(parseMarketingCallbackCommand("mkt:queue:dry:2:3")).toEqual({
+      action: "queue",
+      mode: "dry",
+      submissionId: 2,
+      contentId: 3,
+    });
+    expect(parseMarketingCallbackCommand("mkt:debug:ack")).toEqual({
+      action: "debug",
+      label: "ack",
+    });
+    expect(parseMarketingCallbackCommand("status:2:3")).toEqual({
+      action: "status",
+      submissionId: 2,
+      contentId: 3,
+    });
+    expect(parseMarketingCallbackCommand("not-a-callback")).toBeNull();
+  });
+
+  it("handles marketing callbacks natively without falling through to the model", async () => {
+    runExecMock.mockResolvedValueOnce({
+      stdout: JSON.stringify({ message: "Approved Instagram for submission 2." }),
+      stderr: "",
+    });
+    const params = buildPolicyParams("mkt:approve:instagram:2:2", cfg, {
+      Provider: "telegram",
+      Surface: "telegram",
+      SenderName: "Alex",
+      SenderId: "8241252974",
+      To: "-1003847072628",
+      MessageThreadId: "22",
+    });
+    params.workspaceDir = testWorkspaceDir;
+
+    const result = await handleCommands(params);
+
+    expect(result.shouldContinue).toBe(false);
+    expect(result.reply?.text).toContain("Approved Instagram");
+    expect(runExecMock).toHaveBeenCalledWith(
+      "python3",
+      expect.arrayContaining([
+        path.join(testWorkspaceDir, "skills", "jewelry-content", "scripts", "publish_content.py"),
+        "--db-path",
+        path.join(testWorkspaceDir, "data", "submissions.db"),
+        "callback",
+        "--payload",
+        "mkt:approve:instagram:2:2",
+      ]),
+      expect.objectContaining({ cwd: testWorkspaceDir }),
+    );
+  });
+
+  it("extracts wrapped callback payloads before invoking the runner", async () => {
+    runExecMock.mockResolvedValueOnce({
+      stdout: JSON.stringify({ message: "Queued dry run." }),
+      stderr: "",
+    });
+    const wrappedPayload =
+      'Conversation info (untrusted metadata):\n```json\n{"topic_id":"22"}\n```\n\nmkt:queue:dry:2:2';
+    const params = buildPolicyParams(wrappedPayload, cfg, {
+      Provider: "telegram",
+      Surface: "telegram",
+      SenderId: "8241252974",
+      To: "-1003847072628",
+    });
+    params.workspaceDir = testWorkspaceDir;
+
+    const result = await handleCommands(params);
+
+    expect(result.shouldContinue).toBe(false);
+    expect(result.reply?.text).toContain("Queued dry run");
+    expect(runExecMock).toHaveBeenCalledWith(
+      "python3",
+      expect.arrayContaining(["--payload", "mkt:queue:dry:2:2"]),
+      expect.objectContaining({ cwd: testWorkspaceDir }),
+    );
+  });
+
+  it("handles debug callbacks without invoking the runner", async () => {
+    const params = buildPolicyParams("mkt:debug:ack", cfg, {
+      Provider: "telegram",
+      Surface: "telegram",
+      SenderId: "8241252974",
+      To: "-1003847072628",
+    });
+    params.workspaceDir = testWorkspaceDir;
+
+    const result = await handleCommands(params);
+
+    expect(result.shouldContinue).toBe(false);
+    expect(result.reply?.text).toContain("Debug callback received: ack.");
+    expect(runExecMock).not.toHaveBeenCalled();
+  });
+
+  it("returns callback runner failures as plain text", async () => {
+    runExecMock.mockRejectedValueOnce({
+      stderr: '{"error":"missing db"}',
+      stdout: "",
+      message: "Command failed",
+    });
+    const params = buildPolicyParams("mkt:status:2:2", cfg, {
+      Provider: "telegram",
+      Surface: "telegram",
+      SenderId: "8241252974",
+      To: "-1003847072628",
+    });
+    params.workspaceDir = testWorkspaceDir;
+
+    const result = await handleCommands(params);
+
+    expect(result.shouldContinue).toBe(false);
+    expect(result.reply?.text).toContain("Marketing action failed");
+    expect(result.reply?.text).toContain("missing db");
+  });
+});
+
+describe("marketing go flow commands", () => {
+  const cfg = {
+    commands: { text: true },
+  } as OpenClawConfig;
+
+  it("recognizes bare go triggers without matching normal sentences", () => {
+    expect(isMarketingGoTrigger("go")).toBe(true);
+    expect(isMarketingGoTrigger("create")).toBe(true);
+    expect(isMarketingGoTrigger("go!")).toBe(true);
+    expect(isMarketingGoTrigger("let's go")).toBe(false);
+    expect(isMarketingGoTrigger("create a plan")).toBe(false);
+  });
+
+  it("runs the native marketing go flow and suppresses duplicate chat output on NO_REPLY", async () => {
+    const sessionFile = path.join(testWorkspaceDir, "marketing-topic-22.jsonl");
+    await fs.writeFile(sessionFile, '{"type":"message","message":{"role":"user","content":[{"type":"text","text":"18k yellow gold necklace with ruby in center and diamonds around it, $599, made for a friend"}]}}\n', "utf-8");
+    runExecMock.mockImplementationOnce(async (_cmd: string, argv: string[]) => {
+      const contextPath = argv[argv.indexOf("--context-json-file") + 1];
+      const parsed = JSON.parse(await fs.readFile(contextPath, "utf-8")) as Record<string, unknown>;
+      expect(parsed.session_file).toBe(sessionFile);
+      return {
+        stdout: JSON.stringify({
+          assistant_reply: "NO_REPLY",
+          submission_id: 12,
+          content_id: 34,
+        }),
+        stderr: "",
+      };
+    });
+    const params = buildPolicyParams("go", cfg, {
+      Provider: "telegram",
+      Surface: "telegram",
+      SenderName: "Alex",
+      SenderId: "8241252974",
+      To: "-1003847072628",
+      OriginatingTo: "-1003847072628",
+      MessageThreadId: "22",
+      InboundHistory: [
+        { sender: "Alex", body: "[media attached: /home/node/.openclaw/media/inbound/ruby.jpg]" },
+        {
+          sender: "Alex",
+          body: "18k yellow gold necklace with ruby in center and diamonds around it, $599, made for a friend",
+        },
+      ],
+    });
+    params.workspaceDir = testWorkspaceDir;
+    params.sessionEntry = {
+      sessionId: "marketing-session",
+      updatedAt: Date.now(),
+      sessionFile,
+    } as SessionEntry;
+
+    const result = await handleCommands(params);
+
+    expect(result.shouldContinue).toBe(false);
+    expect(result.reply).toBeUndefined();
+    expect(runExecMock).toHaveBeenCalledWith(
+      "python3",
+      expect.arrayContaining([
+        path.join(testWorkspaceDir, "skills", "jewelry-content", "scripts", "go_flow.py"),
+        "--context-json-file",
+        expect.any(String),
+        "--db-path",
+        path.join(testWorkspaceDir, "data", "submissions.db"),
+      ]),
+      expect.objectContaining({ cwd: testWorkspaceDir }),
+    );
+  });
+
+  it("returns a plain blocker when the go flow runner fails", async () => {
+    runExecMock.mockRejectedValueOnce({
+      stderr: "generation unavailable",
+      stdout: "",
+      message: "Command failed",
+    });
+    const params = buildPolicyParams("create", cfg, {
+      Provider: "telegram",
+      Surface: "telegram",
+      SenderId: "8241252974",
+      To: "-1003847072628",
+      OriginatingTo: "-1003847072628",
+    });
+    params.workspaceDir = testWorkspaceDir;
+
+    const result = await handleCommands(params);
+
+    expect(result.shouldContinue).toBe(false);
+    expect(result.reply?.text).toContain("could not generate the review cards right now");
+    expect(result.reply?.text).toContain("generation unavailable");
+  });
+});
+
+describe("marketing refinement commands", () => {
+  const cfg = {
+    commands: { text: true },
+  } as OpenClawConfig;
+
+  it("only treats plain feedback as potential refinement input", async () => {
+    expect(isPotentialMarketingRefinementInput("make it warmer")).toBe(true);
+    expect(isPotentialMarketingRefinementInput("go")).toBe(false);
+    expect(isPotentialMarketingRefinementInput("/debug reviewcard")).toBe(false);
+    expect(isPotentialMarketingRefinementInput("mkt:status:2:2")).toBe(false);
+  });
+
+  it("runs the native refinement flow when rejected content is awaiting feedback", async () => {
+    await fs.writeFile(
+      path.join(testWorkspaceDir, "skills", "jewelry-content", "scripts", "refine_content.py"),
+      "#!/usr/bin/env python3\n",
+      "utf-8",
+    );
+    runExecMock.mockResolvedValueOnce({
+      stdout: JSON.stringify({
+        matched: true,
+        assistant_reply: "NO_REPLY",
+        submission_id: 12,
+        content_id: 34,
+        platform: "instagram",
+      }),
+      stderr: "",
+    });
+    const params = buildPolicyParams("make the caption shorter and less salesy", cfg, {
+      Provider: "telegram",
+      Surface: "telegram",
+      SenderName: "Alex",
+      SenderId: "8241252974",
+      To: "-1003847072628",
+      OriginatingTo: "telegram:-1003847072628",
+      MessageThreadId: "22",
+    });
+    params.workspaceDir = testWorkspaceDir;
+
+    const result = await handleCommands(params);
+
+    expect(result.shouldContinue).toBe(false);
+    expect(result.reply).toBeUndefined();
+    expect(runExecMock).toHaveBeenCalledWith(
+      "python3",
+      expect.arrayContaining([
+        path.join(testWorkspaceDir, "skills", "jewelry-content", "scripts", "refine_content.py"),
+        "--context-json-file",
+        expect.any(String),
+        "--db-path",
+        path.join(testWorkspaceDir, "data", "submissions.db"),
+      ]),
+      expect.objectContaining({ cwd: testWorkspaceDir }),
+    );
+  });
+});
+
+describe("marketing cron commands", () => {
+  const cfg = {
+    commands: { text: true },
+  } as OpenClawConfig;
+
+  it("treats the cron trigger as a marketing cron command, even when wrapped", async () => {
+    expect(isMarketingCronTrigger("mkt:cron:run")).toBe(true);
+    expect(isMarketingCronTrigger("MKT:CRON:RUN")).toBe(true);
+    expect(
+      isMarketingCronTrigger(
+        "[cron:f6d4b45c-b7ed-40b2-8d8a-d201394cbd18 marketing-publish-runner] mkt:cron:run\nCurrent time: Wednesday, April 8th, 2026 — 4:30 PM (UTC) / 2026-04-08 16:30 UTC",
+      ),
+    ).toBe(true);
+    expect(isMarketingCronTrigger("go")).toBe(false);
+    expect(isMarketingCronTrigger("mkt:status:2:2")).toBe(false);
+  });
+
+  it("runs the native cron flow before the model path", async () => {
+    await fs.writeFile(
+      path.join(
+        testWorkspaceDir,
+        "skills",
+        "jewelry-content",
+        "scripts",
+        "marketing_publish_cron_runner.py",
+      ),
+      "#!/usr/bin/env python3\n",
+      "utf-8",
+    );
+    runExecMock.mockResolvedValueOnce({
+      stdout: "No due marketing publish runs.\n",
+      stderr: "",
+    });
+    const params = buildPolicyParams("mkt:cron:run", cfg, {
+      Provider: "internal",
+      Surface: "internal",
+    });
+    params.workspaceDir = testWorkspaceDir;
+
+    const result = await handleCommands(params);
+
+    expect(result.shouldContinue).toBe(false);
+    expect(result.reply?.text).toBe("No due marketing publish runs.");
+    expect(runExecMock).toHaveBeenCalledWith(
+      "python3",
+      [
+        path.join(
+          testWorkspaceDir,
+          "skills",
+          "jewelry-content",
+          "scripts",
+          "marketing_publish_cron_runner.py",
+        ),
+        "--db-path",
+        path.join(testWorkspaceDir, "data", "submissions.db"),
+      ],
+      expect.objectContaining({ cwd: testWorkspaceDir }),
+    );
+  });
+
+  it("runs the native cron flow even when text commands are disabled", async () => {
+    await fs.writeFile(
+      path.join(
+        testWorkspaceDir,
+        "skills",
+        "jewelry-content",
+        "scripts",
+        "marketing_publish_cron_runner.py",
+      ),
+      "#!/usr/bin/env python3\n",
+      "utf-8",
+    );
+    runExecMock.mockResolvedValueOnce({
+      stdout: "No due marketing publish runs.\n",
+      stderr: "",
+    });
+    const params = buildPolicyParams("mkt:cron:run", { commands: { text: false } } as OpenClawConfig, {
+      Provider: "internal",
+      Surface: "internal",
+    });
+    params.workspaceDir = testWorkspaceDir;
+
+    const result = await handleCommands(params);
+
+    expect(result.shouldContinue).toBe(false);
+    expect(result.reply?.text).toBe("No due marketing publish runs.");
   });
 });
 

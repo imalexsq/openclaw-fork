@@ -1,6 +1,11 @@
+import path from "node:path";
 import { streamSimpleOpenAICompletions, type Model } from "@mariozechner/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../config/config.js";
+import {
+  clearRuntimeConfigSnapshot,
+  resolveConfigPath,
+  setRuntimeConfigSnapshot,
+} from "../config/config.js";
 import type { ModelProviderConfig } from "../config/config.js";
 import { withFetchPreconnect } from "../test-utils/fetch-mock.js";
 import type { AuthProfileStore } from "./auth-profiles.js";
@@ -299,7 +304,7 @@ describe("resolveUsableCustomProviderApiKey", () => {
     });
     expect(resolved).toEqual({
       apiKey: "sk-custom-runtime",
-      source: "models.json",
+      source: path.basename(resolveConfigPath()),
     });
   });
 

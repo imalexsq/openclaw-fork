@@ -21,6 +21,48 @@ const assignIf = (
   }
 };
 
+function parseJsonArrayOfStrings(raw: unknown, flagName: string): string[] {
+  if (typeof raw !== "string" || !raw.trim()) {
+    throw new Error(`${flagName} requires a JSON array of strings`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`${flagName} must be valid JSON`);
+  }
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length === 0 ||
+    parsed.some((value) => typeof value !== "string" || !value.trim())
+  ) {
+    throw new Error(`${flagName} requires a non-empty JSON array of strings`);
+  }
+  return parsed.map((value) => String(value).trim());
+}
+
+function parseJsonStringRecord(raw: unknown, flagName: string): Record<string, string> {
+  if (typeof raw !== "string" || !raw.trim()) {
+    throw new Error(`${flagName} requires a JSON object of string values`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`${flagName} must be valid JSON`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${flagName} requires a JSON object of string values`);
+  }
+  const entries = Object.entries(parsed).map(([key, value]) => {
+    if (typeof value !== "string") {
+      throw new Error(`${flagName} requires all env values to be strings`);
+    }
+    return [key, value] as const;
+  });
+  return Object.fromEntries(entries);
+}
+
 export function registerCronEditCommand(cron: Command) {
   addGatewayClientOptions(
     cron
@@ -47,12 +89,17 @@ export function registerCronEditCommand(cron: Command) {
       .option("--exact", "Disable cron staggering (set stagger to 0)")
       .option("--system-event <text>", "Set systemEvent payload")
       .option("--message <text>", "Set agentTurn payload message")
+      .option("--system-run-command-json <json>", "Set systemRun argv payload as JSON array")
+      .option("--cwd <dir>", "Set systemRun working directory")
+      .option("--env-json <json>", "Set systemRun environment variables from JSON object")
+      .option("--summary-policy <policy>", "Set systemRun summary policy")
+      .option("--success-summary <text>", "Set fixed success summary for systemRun")
       .option(
         "--thinking <level>",
         "Thinking level for agent jobs (off|minimal|low|medium|high|xhigh)",
       )
       .option("--model <model>", "Model override for agent jobs")
-      .option("--timeout-seconds <n>", "Timeout seconds for agent jobs")
+      .option("--timeout-seconds <n>", "Timeout seconds for agentTurn/systemRun jobs")
       .option("--light-context", "Enable lightweight bootstrap context for agent jobs")
       .option("--no-light-context", "Disable lightweight bootstrap context for agent jobs")
       .option("--announce", "Announce summary to a chat (subagent-style)")
@@ -167,6 +214,7 @@ export function registerCronEditCommand(cron: Command) {
           }
 
           const hasSystemEventPatch = typeof opts.systemEvent === "string";
+          const hasSystemRunCommandPatch = typeof opts.systemRunCommandJson === "string";
           const model =
             typeof opts.model === "string" && opts.model.trim() ? opts.model.trim() : undefined;
           const thinking =
@@ -177,21 +225,51 @@ export function registerCronEditCommand(cron: Command) {
             ? Number.parseInt(String(opts.timeoutSeconds), 10)
             : undefined;
           const hasTimeoutSeconds = Boolean(timeoutSeconds && Number.isFinite(timeoutSeconds));
+          const cwd =
+            typeof opts.cwd === "string" && opts.cwd.trim() ? opts.cwd.trim() : undefined;
+          const envJson =
+            typeof opts.envJson === "string"
+              ? parseJsonStringRecord(opts.envJson, "--env-json")
+              : undefined;
+          const summaryPolicy =
+            typeof opts.summaryPolicy === "string" && opts.summaryPolicy.trim()
+              ? opts.summaryPolicy.trim().toLowerCase()
+              : undefined;
+          if (
+            summaryPolicy &&
+            !["stdout", "stderr", "combined", "custom"].includes(summaryPolicy)
+          ) {
+            throw new Error(
+              "--summary-policy must be one of stdout, stderr, combined, or custom",
+            );
+          }
+          const successSummary =
+            typeof opts.successSummary === "string" && opts.successSummary.trim()
+              ? opts.successSummary.trim()
+              : undefined;
           const hasDeliveryModeFlag = opts.announce || typeof opts.deliver === "boolean";
           const hasDeliveryTarget = typeof opts.channel === "string" || typeof opts.to === "string";
           const hasDeliveryAccount = typeof opts.account === "string";
           const hasBestEffort = typeof opts.bestEffortDeliver === "boolean";
+          const hasSystemRunPatch =
+            hasSystemRunCommandPatch ||
+            Boolean(cwd) ||
+            typeof opts.envJson === "string" ||
+            Boolean(summaryPolicy) ||
+            Boolean(successSummary);
           const hasAgentTurnPatch =
             typeof opts.message === "string" ||
             Boolean(model) ||
             Boolean(thinking) ||
-            hasTimeoutSeconds ||
+            (hasTimeoutSeconds && !hasSystemRunPatch) ||
             typeof opts.lightContext === "boolean" ||
             hasDeliveryModeFlag ||
             hasDeliveryTarget ||
             hasDeliveryAccount ||
             hasBestEffort;
-          if (hasSystemEventPatch && hasAgentTurnPatch) {
+          if (
+            [hasSystemEventPatch, hasAgentTurnPatch, hasSystemRunPatch].filter(Boolean).length > 1
+          ) {
             throw new Error("Choose at most one payload change");
           }
           if (hasSystemEventPatch) {
@@ -199,6 +277,23 @@ export function registerCronEditCommand(cron: Command) {
               kind: "systemEvent",
               text: String(opts.systemEvent),
             };
+          } else if (hasSystemRunPatch) {
+            const payload: Record<string, unknown> = { kind: "systemRun" };
+            const command = hasSystemRunCommandPatch
+              ? parseJsonArrayOfStrings(opts.systemRunCommandJson, "--system-run-command-json")
+              : undefined;
+            assignIf(
+              payload,
+              "command",
+              command,
+              hasSystemRunCommandPatch,
+            );
+            assignIf(payload, "cwd", cwd, Boolean(cwd));
+            assignIf(payload, "env", envJson, typeof opts.envJson === "string");
+            assignIf(payload, "summaryPolicy", summaryPolicy, Boolean(summaryPolicy));
+            assignIf(payload, "successSummary", successSummary, Boolean(successSummary));
+            assignIf(payload, "timeoutSeconds", timeoutSeconds, hasTimeoutSeconds);
+            patch.payload = payload;
           } else if (hasAgentTurnPatch) {
             const payload: Record<string, unknown> = { kind: "agentTurn" };
             assignIf(payload, "message", String(opts.message), typeof opts.message === "string");
@@ -212,6 +307,13 @@ export function registerCronEditCommand(cron: Command) {
               typeof opts.lightContext === "boolean",
             );
             patch.payload = payload;
+          }
+
+          if (
+            hasSystemRunPatch &&
+            (hasDeliveryModeFlag || hasDeliveryTarget || hasDeliveryAccount || hasBestEffort)
+          ) {
+            throw new Error("systemRun payload updates do not support delivery options.");
           }
 
           if (hasDeliveryModeFlag || hasDeliveryTarget || hasDeliveryAccount || hasBestEffort) {

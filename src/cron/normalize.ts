@@ -91,12 +91,15 @@ function coercePayload(payload: UnknownRecord) {
     next.kind = "agentTurn";
   } else if (kindRaw === "systemevent") {
     next.kind = "systemEvent";
+  } else if (kindRaw === "systemrun") {
+    next.kind = "systemRun";
   } else if (kindRaw) {
     next.kind = kindRaw;
   }
   if (!next.kind) {
     const hasMessage = typeof next.message === "string" && next.message.trim().length > 0;
     const hasText = typeof next.text === "string" && next.text.trim().length > 0;
+    const hasCommand = Array.isArray(next.command) && next.command.length > 0;
     const hasAgentTurnHint =
       typeof next.model === "string" ||
       typeof next.thinking === "string" ||
@@ -106,6 +109,8 @@ function coercePayload(payload: UnknownRecord) {
       next.kind = "agentTurn";
     } else if (hasText) {
       next.kind = "systemEvent";
+    } else if (hasCommand) {
+      next.kind = "systemRun";
     } else if (hasAgentTurnHint) {
       // Accept partial agentTurn payload patches that only tweak agent-turn-only fields.
       next.kind = "agentTurn";
@@ -152,6 +157,74 @@ function coercePayload(payload: UnknownRecord) {
       next.timeoutSeconds = Math.max(0, Math.floor(next.timeoutSeconds));
     } else {
       delete next.timeoutSeconds;
+    }
+  }
+  if (Array.isArray(next.command)) {
+    const command = next.command
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (command.length > 0) {
+      next.command = command;
+    } else {
+      delete next.command;
+    }
+  } else if ("command" in next) {
+    delete next.command;
+  }
+  if ("cwd" in next) {
+    if (typeof next.cwd === "string") {
+      const trimmed = next.cwd.trim();
+      if (trimmed) {
+        next.cwd = trimmed;
+      } else {
+        delete next.cwd;
+      }
+    } else {
+      delete next.cwd;
+    }
+  }
+  if ("env" in next) {
+    if (isRecord(next.env)) {
+      const envEntries = Object.entries(next.env)
+        .filter(([, value]) => typeof value === "string")
+        .map(([key, value]) => [key, value.trim()] as const)
+        .filter(([, value]) => value.length > 0);
+      next.env = Object.fromEntries(envEntries);
+      if (Object.keys(next.env).length === 0) {
+        delete next.env;
+      }
+    } else {
+      delete next.env;
+    }
+  }
+  if ("summaryPolicy" in next) {
+    if (typeof next.summaryPolicy === "string") {
+      const normalized = next.summaryPolicy.trim().toLowerCase();
+      if (
+        normalized === "stdout" ||
+        normalized === "stderr" ||
+        normalized === "combined" ||
+        normalized === "custom"
+      ) {
+        next.summaryPolicy = normalized;
+      } else {
+        delete next.summaryPolicy;
+      }
+    } else {
+      delete next.summaryPolicy;
+    }
+  }
+  if ("successSummary" in next) {
+    if (typeof next.successSummary === "string") {
+      const trimmed = next.successSummary.trim();
+      if (trimmed) {
+        next.successSummary = trimmed;
+      } else {
+        delete next.successSummary;
+      }
+    } else {
+      delete next.successSummary;
     }
   }
   if (
@@ -299,6 +372,47 @@ function copyTopLevelLegacyDeliveryFields(next: UnknownRecord, payload: UnknownR
   }
 }
 
+function copyTopLevelSystemRunFields(next: UnknownRecord, payload: UnknownRecord) {
+  if (!Array.isArray(payload.command) && Array.isArray(next.command)) {
+    const command = next.command
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (command.length > 0) {
+      payload.command = command;
+    }
+  }
+  if (typeof payload.cwd !== "string" && typeof next.cwd === "string" && next.cwd.trim()) {
+    payload.cwd = next.cwd.trim();
+  }
+  if (!isRecord(payload.env) && isRecord(next.env)) {
+    const envEntries = Object.entries(next.env)
+      .filter(([, value]) => typeof value === "string")
+      .map(([key, value]) => [key, value.trim()] as const)
+      .filter(([, value]) => value.length > 0);
+    if (envEntries.length > 0) {
+      payload.env = Object.fromEntries(envEntries);
+    }
+  }
+  if (
+    typeof payload.summaryPolicy !== "string" &&
+    typeof next.summaryPolicy === "string" &&
+    next.summaryPolicy.trim()
+  ) {
+    payload.summaryPolicy = next.summaryPolicy.trim().toLowerCase();
+  }
+  if (
+    typeof payload.successSummary !== "string" &&
+    typeof next.successSummary === "string" &&
+    next.successSummary.trim()
+  ) {
+    payload.successSummary = next.successSummary.trim();
+  }
+  if (typeof payload.timeoutSeconds !== "number" && typeof next.timeoutSeconds === "number") {
+    payload.timeoutSeconds = next.timeoutSeconds;
+  }
+}
+
 function stripLegacyTopLevelFields(next: UnknownRecord) {
   delete next.model;
   delete next.thinking;
@@ -311,6 +425,11 @@ function stripLegacyTopLevelFields(next: UnknownRecord) {
   delete next.to;
   delete next.bestEffortDeliver;
   delete next.provider;
+  delete next.command;
+  delete next.cwd;
+  delete next.env;
+  delete next.summaryPolicy;
+  delete next.successSummary;
 }
 
 export function normalizeCronJobInput(
@@ -391,10 +510,16 @@ export function normalizeCronJobInput(
   if (!("payload" in next) || !isRecord(next.payload)) {
     const message = typeof next.message === "string" ? next.message.trim() : "";
     const text = typeof next.text === "string" ? next.text.trim() : "";
+    const command =
+      Array.isArray(next.command) && next.command.every((value) => typeof value === "string")
+        ? next.command.map((value) => value.trim()).filter(Boolean)
+        : [];
     if (message) {
       next.payload = { kind: "agentTurn", message };
     } else if (text) {
       next.payload = { kind: "systemEvent", text };
+    } else if (command.length > 0) {
+      next.payload = { kind: "systemRun", command };
     }
   }
 
@@ -414,6 +539,8 @@ export function normalizeCronJobInput(
   if (payload && payload.kind === "agentTurn") {
     copyTopLevelAgentTurnFields(next, payload);
     copyTopLevelLegacyDeliveryFields(next, payload);
+  } else if (payload && payload.kind === "systemRun") {
+    copyTopLevelSystemRunFields(next, payload);
   }
   stripLegacyTopLevelFields(next);
 
@@ -448,6 +575,8 @@ export function normalizeCronJobInput(
       if (kind === "systemEvent") {
         next.sessionTarget = "main";
       } else if (kind === "agentTurn") {
+        next.sessionTarget = "isolated";
+      } else if (kind === "systemRun") {
         next.sessionTarget = "isolated";
       }
     }

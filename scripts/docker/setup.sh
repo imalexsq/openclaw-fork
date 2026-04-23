@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
-EXTRA_COMPOSE_FILE="$ROOT_DIR/docker-compose.extra.yml"
+EXTRA_COMPOSE_FILE="$ROOT_DIR/docker compose.extra.yml"
 IMAGE_NAME="${OPENCLAW_IMAGE:-openclaw:local}"
 EXTRA_MOUNTS="${OPENCLAW_EXTRA_MOUNTS:-}"
 HOME_VOLUME_NAME="${OPENCLAW_HOME_VOLUME:-}"
@@ -569,7 +569,7 @@ if [[ -n "$SANDBOX_ENABLED" ]]; then
   # created only after sandbox prerequisites pass, so the socket is never
   # exposed when sandbox cannot actually run.
   if [[ -S "$DOCKER_SOCKET_PATH" ]]; then
-    SANDBOX_COMPOSE_FILE="$ROOT_DIR/docker-compose.sandbox.yml"
+    SANDBOX_COMPOSE_FILE="$ROOT_DIR/docker compose.sandbox.yml"
     cat >"$SANDBOX_COMPOSE_FILE" <<YAML
 services:
   openclaw-gateway:
@@ -638,8 +638,8 @@ else
     config set agents.defaults.sandbox.mode "off" >/dev/null; then
     echo "WARNING: Failed to reset agents.defaults.sandbox.mode to off" >&2
   fi
-  if [[ -f "$ROOT_DIR/docker-compose.sandbox.yml" ]]; then
-    rm -f "$ROOT_DIR/docker-compose.sandbox.yml"
+  if [[ -f "$ROOT_DIR/docker compose.sandbox.yml" ]]; then
+    rm -f "$ROOT_DIR/docker compose.sandbox.yml"
   fi
 fi
 

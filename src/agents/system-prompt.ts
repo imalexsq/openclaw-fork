@@ -135,6 +135,9 @@ function buildMessagingSection(params: {
             : params.runtimeChannel
               ? `- Inline buttons not enabled for ${params.runtimeChannel}. If you need them, ask to set ${params.runtimeChannel}.capabilities.inlineButtons ("dm"|"group"|"all"|"allowlist").`
               : "",
+          params.inlineButtonsEnabled
+            ? "- For choice questions, prefer numbered buttons such as `1`, `2`, `3`, and `4`. Make the last button `4. Something else` and, when it is selected, ask the user to type the free-text answer in the same chat/thread."
+            : "",
           ...(params.messageToolHints ?? []),
         ]
           .filter(Boolean)
@@ -411,6 +414,7 @@ export function buildAgentSystemPrompt(params: {
     "## Tooling",
     "Tool availability (filtered by policy):",
     "Tool names are case-sensitive. Call tools exactly as listed.",
+    "For edit, send a single flat object with path, oldText, and newText. Do not wrap it in edits[] unless a tool explicitly requires that shape.",
     toolLines.length > 0
       ? toolLines.join("\n")
       : [

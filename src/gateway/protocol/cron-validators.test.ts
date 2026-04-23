@@ -44,6 +44,29 @@ describe("cron protocol validators", () => {
     ).toBe(true);
   });
 
+  it("accepts isolated systemRun payloads and rejects shell-string commands", () => {
+    expect(
+      validateCronAddParams({
+        ...minimalAddParams,
+        sessionTarget: "isolated",
+        payload: {
+          kind: "systemRun",
+          command: ["python3", "runner.py"],
+        },
+      }),
+    ).toBe(true);
+    expect(
+      validateCronAddParams({
+        ...minimalAddParams,
+        sessionTarget: "isolated",
+        payload: {
+          kind: "systemRun",
+          command: "python3 runner.py",
+        },
+      }),
+    ).toBe(false);
+  });
+
   it("rejects add params when required scheduling fields are missing", () => {
     const { wakeMode: _wakeMode, ...withoutWakeMode } = minimalAddParams;
     expect(validateCronAddParams(withoutWakeMode)).toBe(false);

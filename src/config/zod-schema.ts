@@ -566,6 +566,24 @@ export const OpenClawSchema = z
           })
           .strict()
           .optional(),
+        systemRun: z
+          .object({
+            allow: z
+              .array(
+                z
+                  .object({
+                    id: z.string().min(1),
+                    argvPrefix: z.array(z.string().min(1)).min(1),
+                    cwdPrefix: z.string().optional(),
+                    envAllowlist: z.array(z.string().min(1)).optional(),
+                    description: z.string().optional(),
+                  })
+                  .strict(),
+              )
+              .optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .superRefine((val, ctx) => {

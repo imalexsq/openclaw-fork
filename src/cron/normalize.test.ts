@@ -359,6 +359,16 @@ describe("normalizeCronJobCreate", () => {
     expect(typeof normalized.name).toBe("string");
   });
 
+  it("defaults systemRun jobs to isolated without announce delivery", () => {
+    const normalized = normalizeCronJobCreate({
+      schedule: { kind: "every", everyMs: 60_000 },
+      payload: { kind: "systemRun", command: ["python3", "runner.py"] },
+    }) as unknown as Record<string, unknown>;
+
+    expect(normalized.sessionTarget).toBe("isolated");
+    expect(normalized.delivery).toBeUndefined();
+  });
+
   it("maps top-level model/thinking/timeout into payload for legacy add params", () => {
     const normalized = normalizeCronJobCreate({
       name: "legacy root fields",

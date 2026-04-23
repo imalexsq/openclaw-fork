@@ -1,7 +1,11 @@
 import path from "node:path";
 import { type Api, type Model } from "@mariozechner/pi-ai";
 import { formatCliCommand } from "../cli/command-format.js";
-import { getRuntimeConfigSnapshot, type OpenClawConfig } from "../config/config.js";
+import {
+  getRuntimeConfigSnapshot,
+  resolveConfigPath,
+  type OpenClawConfig,
+} from "../config/config.js";
 import type { ModelProviderAuthMode, ModelProviderConfig } from "../config/types.js";
 import { coerceSecretRef } from "../config/types.secrets.js";
 import { getShellEnvAppliedKeys } from "../infra/shell-env.js";
@@ -74,6 +78,10 @@ type ResolvedCustomProviderApiKey = {
   source: string;
 };
 
+function resolveCustomProviderConfigSourceLabel(env: NodeJS.ProcessEnv = process.env): string {
+  return path.basename(resolveConfigPath(env));
+}
+
 export function resolveUsableCustomProviderApiKey(params: {
   cfg: OpenClawConfig | undefined;
   provider: string;
@@ -84,7 +92,10 @@ export function resolveUsableCustomProviderApiKey(params: {
     return null;
   }
   if (!isNonSecretApiKeyMarker(customKey)) {
-    return { apiKey: customKey, source: "models.json" };
+    return {
+      apiKey: customKey,
+      source: resolveCustomProviderConfigSourceLabel(params.env ?? process.env),
+    };
   }
   if (!isKnownEnvApiKeyMarker(customKey)) {
     return null;

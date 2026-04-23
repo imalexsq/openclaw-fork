@@ -29,6 +29,34 @@ import { parseConfigCommand } from "./config-commands.js";
 import { resolveConfigWriteDeniedText } from "./config-write-authorization.js";
 import { parseDebugCommand } from "./debug-commands.js";
 
+type TelegramDebugButton = {
+  text: string;
+  callback_data: string;
+  style?: "danger" | "success" | "primary";
+};
+
+type TelegramDebugButtonRow = TelegramDebugButton[];
+
+function buildDebugButtonsKeyboard(): TelegramDebugButtonRow[] {
+  return [[{ text: "Ack", callback_data: "/debug buttons ack", style: "success" }]];
+}
+
+function buildDebugReviewCardKeyboard(): TelegramDebugButtonRow[] {
+  return [
+    [
+      { text: "Approve", callback_data: "/debug reviewcard approve", style: "success" },
+      { text: "Reject", callback_data: "/debug reviewcard reject", style: "danger" },
+    ],
+    [
+      { text: "Queue Live", callback_data: "/debug reviewcard live", style: "primary" },
+    ],
+    [
+      { text: "Status", callback_data: "/debug reviewcard status" },
+      { text: "Reschedule", callback_data: "/debug reviewcard reschedule" },
+    ],
+  ];
+}
+
 export const handleConfigCommand: CommandHandler = async (params, allowTextCommands) => {
   if (!allowTextCommands) {
     return null;
@@ -215,6 +243,59 @@ export const handleDebugCommand: CommandHandler = async (params, allowTextComman
     return {
       shouldContinue: false,
       reply: { text: `⚠️ ${debugCommand.message}` },
+    };
+  }
+  const isTelegram =
+    normalizeChannelId(params.command.channel) === "telegram" || params.command.surface === "telegram";
+  if (debugCommand.action === "buttons") {
+    if (!isTelegram) {
+      return {
+        shouldContinue: false,
+        reply: { text: "⚙️ /debug buttons is only available on Telegram." },
+      };
+    }
+    return {
+      shouldContinue: false,
+      reply: {
+        text: "⚙️ Debug button smoke test. Tap Ack to verify inline buttons and callback delivery.",
+        channelData: { telegram: { buttons: buildDebugButtonsKeyboard() } },
+      },
+    };
+  }
+  if (debugCommand.action === "buttons-ack") {
+    return {
+      shouldContinue: false,
+      reply: { text: "⚙️ Debug button callback received." },
+    };
+  }
+  if (debugCommand.action === "reviewcard") {
+    if (!isTelegram) {
+      return {
+        shouldContinue: false,
+        reply: { text: "⚙️ /debug reviewcard is only available on Telegram." },
+      };
+    }
+    return {
+      shouldContinue: false,
+      reply: {
+        text:
+          "Instagram draft\n\nA ruby centerpiece framed by diamonds in 18K yellow gold. Made for a friend, with a warm personal story behind it.\n\nPrice: $599\n\nThis is a deterministic debug card. It does not write to the marketing pipeline.",
+        channelData: { telegram: { buttons: buildDebugReviewCardKeyboard() } },
+      },
+    };
+  }
+  if (debugCommand.action === "reviewcard-action") {
+    const labels = {
+      approve: "Approve",
+      reject: "Reject",
+      dry: "Dry Run",
+      live: "Queue Live",
+      status: "Status",
+      reschedule: "Reschedule",
+    } as const;
+    return {
+      shouldContinue: false,
+      reply: { text: `⚙️ Debug review-card action received: ${labels[debugCommand.button]}.` },
     };
   }
   if (debugCommand.action === "show") {
